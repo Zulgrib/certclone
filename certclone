@@ -1,0 +1,111 @@
+##################
+######CONFIG######
+##################
+###Your secret
+Secret=cat /volulme1/d/directory/file
+###Unset if not using file for secret
+PASSWD_FILE=$Secret
+###Remote user
+User=My_SMB_User
+Share=//netbios/share/subdirectory
+Mountpoint=/volume1/d/directory/subdirectory
+###Where is your mount.cifs
+MountCommand=mount.cifs
+###Can contain UID or Username depending on your version of mount.cifs
+LocalUser=0
+LocalGroup=0
+###Where to obtain info like sender mail, mail to contact, DSM formated
+SourcePath=/usr/syno/etc/synosmpt.conf
+###Full syslog command to prepend to error message
+syslogCommand="synologset1 sys err 0x11800000"
+###Array of certificate directories
+LocalCertDirPrefix=/usr/syno/etc/certificate
+LocalCertDir[0]=$LocalCertDirPrefix/123456/
+RemoteCertDir[0]=$Mountpoint/subdomain.domain.tld/
+LocalCertDir[1]=$LocalCertDirPrefix/abcdef/
+RemoteCertDir[1]=$Mountpoint/examplarium.example.com/
+###String table path (unimplemented)
+lang=
+
+##################
+######SCRIPT######
+##################
+mount_share(){
+	if [ -d "$Mountpoint" ]; then
+
+		$MountCommand $Share $Mountpoint -o user=$User,uid=$LocalUser,gid=$LocalGroup,filemode=0770,dirmode=0770,iocharset=utf8,cache=none,directio,nounix
+		
+		if [ $? = 0 ] 
+			then
+				copy_key
+				return 0
+			else 
+				mount_error_notify $?
+				return 2
+		fi
+		return $?
+	
+	else
+		mount_error_notify_mountpoint
+		return 1
+	fi
+}
+
+mount_error_notify(){
+	SubjectErrMsg="Échec de copie de clefs"
+	ErrMsg="La copie de clefs pour le serveur mandataire inversé a échoué car il n'a pas été possible de monter la partition."
+
+	$syslogCommand "$ErrMsg"
+	/usr/bin/php -r "mail('$To','$SubjectPrefix $SubjectErrMsg','$ErrMsg,Code $1','From: $From <$FromMail>');"
+}
+
+mount_error_notify_mountpoint(){
+	SubjectErrMsg="Échec de copie de clefs"
+	ErrMsg="La copie de clefs pour le serveur mandataire inversé a échoué car le repertoire pour monter la partition est inexistant."
+
+	$syslogCommand "$ErrMsg"
+	/usr/bin/php -r "mail('$To','$SubjectPrefix $SubjectErrMsg','$ErrMsg','From: $From <$FromMail>');"	
+}
+
+copy_key_error_mkdir(){
+	SubjectErrMsg="Échec de copie de clefs"
+	ErrMsg="La copie de clefs pour le serveur mandataire inversé a échoué car il est impossible de créer le repertoire pour copier les clefs."
+
+	$syslogCommand "$ErrMsg"
+	/usr/bin/php -r "mail('$To','$SubjectPrefix $SubjectErrMsg','$ErrMsg, Code$1','From: $From <$FromMail>');"	
+}
+
+unmount_share(){
+	umount $Mountpoint
+}
+
+copy_key(){
+	for i in ${RemoteCertDir[@]}; do
+		mkdir -p $i
+		if [ $? != 0 ]
+			then
+			copy_key_error_mkdir $?
+			return 1
+		fi
+	done
+	count=${#LocalCertDir[@]}
+	i=0
+	while [[ "$i" -lt "$count" ]]; do
+		cp ${LocalCertDir[$i]} ${RemoteCertDir[$i]}
+		if [ $? != 0 ]
+			then
+			copy_key_error_cp $?
+			return 1
+		else
+			((i++))
+		fi
+	done
+}
+
+source $SourcePath
+To=$eventmail1,$eventmail2
+SubjectPrefix=$eventsubjectprefix
+From=$smtp_from_name
+FromMail=$smtp_from_mail
+mount_share
+
